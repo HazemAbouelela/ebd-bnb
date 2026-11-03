@@ -1,98 +1,94 @@
+import dns from "node:dns/promises";
+dns.setServers(["8.8.8.8", "1.1.1.1"]);
+
 import express from "express";
+import mongoose from "mongoose";
 
 const app = express();
 const PORT = 3000;
 
 // ========== MIDDLEWARE ==========
-// 1. Log every incoming request to the terminal
 app.use((req, res, next) => {
   console.log(req.method, req.url);
   next();
 });
 
-// 2. Read JSON request bodies into req.body
 app.use(express.json());
 
-// ========== DATABASE ==========
-// Our fake in-memory database array and ID tracker
-let nextId = 4;
-let listings = [
-  { id: 1, title: "Nile View Apartment", pricePerNight: 85 },
-  { id: 2, title: "Beach House", pricePerNight: 140 },
-  { id: 3, title: "Desert Eco-Lodge", pricePerNight: 60 }
-];
+// ========== DATABASE CONNECTION ==========
+async function connectDB() {
+  console.log("Connecting to MongoDB...");
+  const uri = process.env.MONGODB_URI;
+  await mongoose.connect(uri, { dbName: "ebd-bnb" });
+  console.log("Connected to MongoDB");
+}
 
 // ========== MODEL ==========
-// Functions that are the ONLY code allowed to touch the array
-function getAllListings() {
-  return listings;
+const listingSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  pricePerNight: { type: Number, required: true },
+});
+
+const Listing = mongoose.model("Listing", listingSchema);
+
+async function getAllListings() {
+  return Listing.find();
 }
 
-function getListingById(id) {
-  return listings.find((listing) => listing.id === id);
+async function getListingById(id) {
+  if (!mongoose.isValidObjectId(id)) return null;
+  return Listing.findById(id);
 }
 
-function addListing(data) {
-  const listing = {
-    id: nextId++,
-    title: data.title,
-    pricePerNight: data.pricePerNight,
-  };
-  listings.push(listing);
-  return listing;
+async function addListing(data) {
+  return Listing.create(data);
 }
 
-function updateListing(id, data) {
-  const listing = getListingById(id);
-  if (listing) {
-    listing.title = data.title;
-    listing.pricePerNight = data.pricePerNight;
-  }
-  return listing;
+async function updateListing(id, data) {
+  if (!mongoose.isValidObjectId(id)) return null;
+  return Listing.findByIdAndUpdate(id, data, { new: true });
 }
 
-function removeListing(id) {
-  const listing = getListingById(id);
-  listings = listings.filter((item) => item.id !== id);
-  return listing;
+async function removeListing(id) {
+  if (!mongoose.isValidObjectId(id)) return null;
+  return Listing.findByIdAndDelete(id);
 }
 
 // ========== CONTROLLERS ==========
-// Read the request, call the model, select status, and send the response
-function handleGetAll(req, res) {
-  res.json(getAllListings());
+async function handleGetAll(req, res) {
+  res.json(await getAllListings());
 }
 
-function handleGetOne(req, res) {
-  const listing = getListingById(Number(req.params.id));
+async function handleGetOne(req, res) {
+  const listing = await getListingById(req.params.id);
   if (!listing) {
     return res.status(404).json({ error: "Listing not found" });
   }
   res.json(listing);
 }
 
-function handleCreate(req, res) {
+async function handleCreate(req, res) {
   const data = req.body || {};
   if (!data.title || !data.pricePerNight) {
     return res.status(400).json({ error: "title and pricePerNight are required" });
   }
-  res.status(201).json(addListing(data));
+  res.status(201).json(await addListing(data));
 }
 
-function handleUpdate(req, res) {
+async function handleUpdate(req, res) {
   const data = req.body || {};
   if (!data.title || !data.pricePerNight) {
     return res.status(400).json({ error: "title and pricePerNight are required" });
   }
-  const listing = updateListing(Number(req.params.id), data);
+  const listing = await updateListing(req.params.id, data);
   if (!listing) {
     return res.status(404).json({ error: "Listing not found" });
   }
   res.json(listing);
 }
 
-function handleDelete(req, res) {
-  const listing = removeListing(Number(req.params.id));
+async function handleDelete(req, res) {
+  const listing = await removeListing(req.params.id);
   if (!listing) {
     return res.status(404).json({ error: "Listing not found" });
   }
@@ -100,7 +96,6 @@ function handleDelete(req, res) {
 }
 
 // ========== ROUTES ==========
-// Connect each method + URL to its controller and root message
 app.get("/", (req, res) => {
   res.send("Welcome to ebd bn'b");
 });
@@ -112,7 +107,8 @@ app.put("/api/listings/:id", handleUpdate);
 app.delete("/api/listings/:id", handleDelete);
 
 // ========== START ==========
-// Start the server on port 3000
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
 });
